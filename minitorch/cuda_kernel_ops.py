@@ -405,19 +405,19 @@ class CudaKernelOps(TensorOps):
 
     @staticmethod
     def attn_softmax_bw(out_grad: Tensor, soft_inp: Tensor):
-      #   BEGIN ASSIGN3_1
+      #   BEGIN ASSIGN4_1_2
       raise("Not implemented")
-      #   END ASSIGN3_1
+      #   END ASSIGN4_1_2
 
     @staticmethod
     def layernorm_fw(inp: Tensor, gamma: Tensor, beta: Tensor):
-      #   BEGIN ASSIGN3_2
+      #   BEGIN ASSIGN4_2_1
       raise("Not implemented")
-      #   END ASSIGN3_2
+      #   END ASSIGN4_2_1
       
     @staticmethod
     def layernorm_bw(out_grad: Tensor, inp: Tensor, gamma: Tensor, beta: Tensor, var: Tensor, mean: Tensor):
-      #   BEGIN ASSIGN3_2
+      #   BEGIN ASSIGN4_2_2
       raise("Not implemented")
-      #   END ASSIGN3_2
+      #   END ASSIGN4_2_2
       

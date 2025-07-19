@@ -103,22 +103,16 @@ class Add(Function):
 class Mul(Function):
     @staticmethod
     def forward(ctx: Context, a: Tensor, b: Tensor) -> Tensor:
-        # ASSIGN2.3
         ctx.save_for_backward(a, b)
         return a.f.mul_zip(a, b)
-        # END ASSIGN2.3
 
     @staticmethod
     def backward(ctx: Context, grad_output: Tensor) -> Tuple[Tensor, Tensor]:
-        # ASSIGN2.4
         a, b = ctx.saved_values
-        # import pdb
-        # pdb.set_trace()
         return (
             grad_output.f.mul_zip(b, grad_output),
             grad_output.f.mul_zip(a, grad_output),
         )
-        # END ASSIGN2.4
 
 
 class PowerScalar(Function):
@@ -141,7 +135,7 @@ class PowerScalar(Function):
             output : Tensor
                 Tensor containing the result of raising every element of a to scalar.
         """
-        # COPY FROM ASSIGN2_1
+        # COPY FROM ASSIGN3
         raise NotImplementedError
 
     @staticmethod
@@ -166,7 +160,7 @@ class PowerScalar(Function):
         a, scalar = ctx.saved_values
         grad_a    = None
         
-        # COPY FROM ASSIGN2_1
+        # COPY FROM ASSIGN3
         raise NotImplementedError
 
         return (grad_a, 0.0)
@@ -190,7 +184,7 @@ class Tanh(Function):
             output : Tensor
                 Tensor containing the element-wise tanh of a.
         """
-        # COPY FROM ASSIGN2_1
+        # COPY FROM ASSIGN3
         raise NotImplementedError
     
     @staticmethod
@@ -209,75 +203,59 @@ class Tanh(Function):
             output : Tensor
                 gradient_for_a must be the correct element-wise gradient for tanh.
         """
-        # COPY FROM ASSIGN2_1
+        # COPY FROM ASSIGN3
         raise NotImplementedError
 
 
 class Sigmoid(Function):
     @staticmethod
     def forward(ctx: Context, t1: Tensor) -> Tensor:
-        # ASSIGN2.3
         out = t1.f.sigmoid_map(t1)
         ctx.save_for_backward(out)
         return out
-        # END ASSIGN2.3
 
     @staticmethod
     def backward(ctx: Context, grad_output: Tensor) -> Tensor:
-        # ASSIGN2.4
         sigma: Tensor = ctx.saved_values[0]
         return sigma * (-sigma + 1.0) * grad_output
-        # END ASSIGN2.4
 
 
 class ReLU(Function):
     @staticmethod
     def forward(ctx: Context, t1: Tensor) -> Tensor:
-        # ASSIGN2.3
         ctx.save_for_backward(t1)
         return t1.f.relu_map(t1)
-        # END ASSIGN2.3
 
     @staticmethod
     def backward(ctx: Context, grad_output: Tensor) -> Tensor:
-        # ASSIGN2.4
         (a,) = ctx.saved_values
         return grad_output.f.relu_back_zip(a, grad_output)
-        # END ASSIGN2.4
 
 
 class Log(Function):
     @staticmethod
     def forward(ctx: Context, t1: Tensor) -> Tensor:
-        # ASSIGN2.3
         ctx.save_for_backward(t1)
         out = t1.f.log_map(t1)
         return out
-        # END ASSIGN2.3
 
     @staticmethod
     def backward(ctx: Context, grad_output: Tensor) -> Tensor:
-        # ASSIGN2.4
         (a,) = ctx.saved_values
         return grad_output.f.log_back_zip(a, grad_output)
-        # END ASSIGN2.4
 
 
 class Exp(Function):
     @staticmethod
     def forward(ctx: Context, t1: Tensor) -> Tensor:
-        # ASSIGN2.3
         out = t1.f.exp_map(t1)
         ctx.save_for_backward(out)
         return out
-        # END ASSIGN2.3
 
     @staticmethod
     def backward(ctx: Context, grad_output: Tensor) -> Tensor:
-        # ASSIGN2.4
         (a,) = ctx.saved_values
         return grad_output.f.mul_zip(a, grad_output)
-        # END ASSIGN2.4
 
 
 class Sum(Function):
@@ -304,54 +282,41 @@ class All(Function):
 class LT(Function):
     @staticmethod
     def forward(ctx: Context, a: Tensor, b: Tensor) -> Tensor:
-        # ASSIGN2.3
         ctx.save_for_backward(a.shape, b.shape)
         return a.f.lt_zip(a, b)
-        # END ASSIGN2.3
 
     @staticmethod
     def backward(ctx: Context, grad_output: Tensor) -> Tuple[Tensor, Tensor]:
-        # ASSIGN2.4
         a_shape, b_shape = ctx.saved_values
         return zeros(a_shape), zeros(b_shape)
-        # END ASSIGN2.4
 
 
 class EQ(Function):
     @staticmethod
     def forward(ctx: Context, a: Tensor, b: Tensor) -> Tensor:
-        # ASSIGN2.3
         ctx.save_for_backward(a.shape, b.shape)
         return a.f.eq_zip(a, b)
-        # END ASSIGN2.3
 
     @staticmethod
     def backward(ctx: Context, grad_output: Tensor) -> Tuple[Tensor, Tensor]:
-        # ASSIGN2.4
         a_shape, b_shape = ctx.saved_values
         return zeros(a_shape), zeros(b_shape)
-        # END ASSIGN2.4
 
 
 class IsClose(Function):
     @staticmethod
     def forward(ctx: Context, a: Tensor, b: Tensor) -> Tensor:
-        # ASSIGN2.3
         return a.f.is_close_zip(a, b)
-        # END ASSIGN2.3
 
 
 class Permute(Function):
     @staticmethod
     def forward(ctx: Context, a: Tensor, order: Tensor) -> Tensor:
-        # ASSIGN2.3
         ctx.save_for_backward(order)
         return a._new(a._tensor.permute(*[int(order[i]) for i in range(order.size)]))
-        # END ASSIGN2.3
 
     @staticmethod
     def backward(ctx: Context, grad_output: Tensor) -> Tuple[Tensor, float]:
-        # ASSIGN2.4
         order: Tensor = ctx.saved_values[0]
         order2: List[int] = [
             a[0]
@@ -360,7 +325,6 @@ class Permute(Function):
             )
         ]
         return grad_output._new(grad_output._tensor.permute(*order2)), 0.0
-        # END ASSIGN2.4
 
 
 class View(Function):
@@ -418,29 +382,29 @@ class MatMul(Function):
 class Attn_Softmax(Function):
     @staticmethod
     def forward(ctx: Context, inp: Tensor, mask: Tensor) -> Tensor:
-      #   BEGIN ASSIGN3_1 
+      #   BEGIN ASSIGN4_1_1
       raise NotImplementedError("Need to implement for Assignment 3")
-      #   END ASSIGN3_1
+      #   END ASSIGN4_1_1
 
     @staticmethod
     def backward(ctx: Context, out_grad: Tensor) -> Tensor:
-      #   BEGIN ASSIGN3_1 
+      #   BEGIN ASSIGN4_1_2
       raise NotImplementedError("Need to implement for Assignment 3")
-      #   END ASSIGN3_1
+      #   END ASSIGN4_1_2
 
 
 class LayerNorm(Function):
     @staticmethod
     def forward(ctx: Context, inp: Tensor, gamma: Tensor, beta: Tensor) -> Tensor:
-      #   BEGIN ASSIGN3_2 
+      #   BEGIN ASSIGN4_2_1
       raise NotImplementedError("Need to implement for Assignment 3")
-      #   END ASSIGN3_2
+      #   END ASSIGN4_2_1
 
     @staticmethod
     def backward(ctx: Context, out_grad: Tensor) -> Tensor:
-      #   BEGIN ASSIGN3_2
+      #   BEGIN ASSIGN4_2_2
       raise NotImplementedError("Need to implement for Assignment 3")
-      #   END ASSIGN3_2
+      #   END ASSIGN4_2_2
 
 
 # Helpers for Constructing tensors

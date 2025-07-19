@@ -37,7 +37,7 @@ template <typename T>
 __global__ void ker_layer_norm(T *ln_res, T *vars, T *means, const T *inp,
                                const T *scale, const T *bias, int hidden_size) {
   
-  /// BEGIN ASSIGN3_2
+  /// BEGIN ASSIGN4_2_1
   /// TODO
   // Hints:
   // 1. Compute x and x^2 with reinterpret_cast by casting to float4 for speedup
@@ -57,7 +57,7 @@ __global__ void ker_layer_norm(T *ln_res, T *vars, T *means, const T *inp,
   // Step 3
   
   assert(false && "Not Implemented");
-  /// END ASSIGN3_2
+  /// END ASSIGN4_2_1
 }
 
 extern "C" {
@@ -159,7 +159,7 @@ __global__ void ker_ln_bw_dgamma_dbetta(T *gamma_grad, T *betta_grad,
                                         const T *betta, const T *vars,
                                         const T *means, int rows, int width) {
 
-  /// BEGIN ASSIGN3_2
+  /// BEGIN ASSIGN4_2_2
   /// TODO
   // Hints:
   // 1. Compute the partial gradients by looping across inp rows
@@ -186,7 +186,7 @@ __global__ void ker_ln_bw_dgamma_dbetta(T *gamma_grad, T *betta_grad,
   // Step 4
 
   assert(false && "Not Implemented");
-  /// END ASSIGN3_2
+  /// END ASSIGN4_2_2
 }
 
 /**
@@ -224,7 +224,7 @@ __global__ void ker_ln_bw_dinp(T *inp_grad, const T *out_grad, const T *inp,
                                const T *gamma, const T *betta, const T *vars,
                                const T *means, int hidden_dim) {
   
-  /// BEGIN ASSIGN3_2
+  /// BEGIN ASSIGN4_2_2
   /// TODO
   // Hints:
   // 1. Compute dxhat=dy*w with reinterpret_cast by casting to float4 for speedup
@@ -241,7 +241,7 @@ __global__ void ker_ln_bw_dinp(T *inp_grad, const T *out_grad, const T *inp,
   // Step 4
   
   assert(false && "Not Implemented");
-  /// END ASSIGN3_2
+  /// END ASSIGN4_2_2
 }
 extern "C" {
 void launch_layernorm_bw(float *gamma_grad, float *betta_grad, float *inp_grad,

@@ -32,7 +32,7 @@ def test_launch_attn_softmax_bw():
     soft_inp_mt = inp_mt.attn_softmax(mask_mt)
 
     start_time = time.time()
-    soft_inp_mt.backward(out_grad_mt)
+    inp_mt.grad, _ = minitorch.Attn_Softmax.backward(soft_inp_mt.history.ctx, out_grad_mt)
     end_time = time.time()
 
     inp_grad = torch.tensor(inp_mt.grad.to_numpy(), dtype=torch.float32).cuda()

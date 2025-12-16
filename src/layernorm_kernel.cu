@@ -277,8 +277,7 @@ void launch_layernorm_bw(float *gamma_grad, float *betta_grad, float *inp_grad,
   // Launch kernels
   // Compute grad of gamma and betta
   // This calculates the number of blocks needed to cover the data along the specified dimension, rounds it up.
-  // The result is then multiplied by TILE_DIM to ensure that the grid size is a multiple of TILE_DIM.
-  dim3 grid_dim(((hidden_dim + TILE_DIM - 1) / TILE_DIM) * TILE_DIM);
+  dim3 grid_dim((hidden_dim + TILE_DIM - 1) / TILE_DIM);
   dim3 block_dim(TILE_DIM, TILE_DIM);
   ker_ln_bw_dgamma_dbetta<float><<<grid_dim, block_dim, 0, stream_1>>>(
       d_gamma_grad, d_betta_grad, d_out_grad, d_inp, d_gamma, d_betta, d_vars,

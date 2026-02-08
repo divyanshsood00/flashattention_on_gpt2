@@ -266,7 +266,7 @@ blockDim.y = warps_per_block
 
 @param
 grad: [batch_size, nhead, seq_len, seq_len], output grad.
-output: [batch_size, nhead, seq_len, seq_len], output of softmax forward.
+inp: [batch_size, nhead, seq_len, seq_len], **output** of softmax forward.
 */
 template <typename T, int ITERATIONS>
 __global__ void ker_attn_softmax_bw(T *grad, const T *inp, int softmax_length) {
@@ -306,7 +306,7 @@ __global__ void ker_attn_softmax_bw(T *grad, const T *inp, int softmax_length) {
 // template <typename T>
 extern "C" {
 void launch_attn_softmax_bw(float *out_grad,
-                                const float *soft_inp, int rows,
+                                const float *soft_outp, int rows,
                                 int softmax_len,
                                 cudaStream_t stream) {
   

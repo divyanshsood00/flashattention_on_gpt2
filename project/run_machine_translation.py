@@ -21,7 +21,7 @@ from minitorch.cuda_kernel_ops import CudaKernelOps
 
 def get_dataset(dataset_name, model_max_length):
     """
-    Obtrain IWSLT (de-en) dataset.
+    Obtain IWSLT (de-en) dataset.
     """
     dataset = {
         split: datasets.load_dataset(dataset_name, split=split)['translation']

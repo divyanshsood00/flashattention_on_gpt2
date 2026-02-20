@@ -28,7 +28,7 @@ blockDim.x = hidden_size
 @param
 ln_res: [batch_size * seq_len, hidden_size], ln result.
 vars: [batch_size * seq_len], variance per token
-means: [batch_size * seq_len], means per token, can be nullput
+means: [batch_size * seq_len], means per token, can be nullptr
 inp: [batch_size * seq_len, hidden_size], ln input.
 scale: [hidden_size], ln scale
 bias: [hidden_size], ln bias
@@ -125,7 +125,7 @@ void launch_layernorm(float *ln_res, float *vars, float *means,
 
 /**
 @brief: ker_ln_bw_dgamma_dbetta
-Layer norm backword kernel, compute the gradient of gamma and betta.
+Layer norm backward kernel, compute the gradient of gamma and betta.
 dbetta = sum(dout, dim=0)
 dgamma = sum(xhat * dout, dim=0)
 xhat = (input - mean) * rsqrt(var) or
@@ -191,7 +191,7 @@ __global__ void ker_ln_bw_dgamma_dbetta(T *gamma_grad, T *betta_grad,
 
 /**
 @brief: ker_ln_bw_dinp
-Layer norm backword kernel, compute the gradient of input.
+Layer norm backward kernel, compute the gradient of input.
 dinp = (dxhat - (sum(dxhat) + xhat * sum(dxhat * xhat)) / hidden_dim)
   * rsqrt(var)
 xhat = (input - mean) * rsqrt(var) if mean is not nullptr

@@ -35,9 +35,15 @@ attn_mask: [batch_size, to_len], padding tokens are -inf,
 template <typename T, int block_dim, int ele_per_thread>
 __global__ void ker_attn_softmax_lt32(T *inp, const T *attn_mask, int from_len,
                                       int to_len, bool mask_future) {
+  // Grid mapping:
+  //   - y dimension picks batch element.
+  //   - z dimension picks attention head.
+  // For this specialized kernel (to_len <= 64 path in launcher), one block
+  // processes one query row at a time and normalizes over key dimension.
   int batch_id = blockIdx.y;
   int head_id = blockIdx.z;
   const int nhead = gridDim.z;
+  // token_per_reduce = 1 means each reduction computes one query token row.
   const int token_per_reduce = 1;
   typedef cub::BlockLoad<T, block_dim, ele_per_thread,
                          cub::BLOCK_LOAD_VECTORIZE>
@@ -48,67 +54,87 @@ __global__ void ker_attn_softmax_lt32(T *inp, const T *attn_mask, int from_len,
       BlockStore;
   __shared__ typename BlockStore::TempStorage ts_store;
 
+  // Per-thread tile of attention mask values. Shape is [ele_per_thread], so
+  // each thread carries the same lane positions it will use for input logits.
+  // This keeps indexing simple and memory accesses coalesced.
   T mval[ele_per_thread];
   if (attn_mask) {
+    // Select this batch row of mask: [to_len].
     attn_mask += batch_id * to_len;
+    // BlockLoad handles vectorized/coalesced reads and automatically fills
+    // out-of-range lanes with -inf (identity for max, and 0 prob after exp).
     BlockLoad(ts_load).Load(attn_mask, mval, to_len, REDUCE_FLOAT_INF_NEG);
   }
 
+  // Move pointer to (batch_id, head_id, 0, 0) in [B, H, from_len, to_len].
   inp += flat_3dim(batch_id, head_id, 0, nhead, from_len * to_len);
   for (int token_id = blockIdx.x * token_per_reduce; token_id < from_len;
        token_id += gridDim.x * token_per_reduce) {
+    // inp_val holds the logits for one query token row, partitioned across
+    // threads and lanes. Total covered keys = block_dim * ele_per_thread.
     T inp_val[token_per_reduce][ele_per_thread];
     for (int i = 0; i < token_per_reduce && (token_id + i) < from_len; i++) {
+      // Load logits for row token_id + i over key dimension to_len.
       BlockLoad(ts_load).Load(inp + (token_id + i) * to_len, inp_val[i], to_len,
                               REDUCE_FLOAT_INF_NEG);
     }
 
     /* step 1. compute max */
-    // thread local max
-    // use fmaxf() to compute max
+    // Softmax is computed as exp(x - max(x)) / sum(exp(x - max(x))).
+    // Subtracting max avoids overflow in exp while preserving probabilities.
+    // We first compute local max per thread, then reduce to row-wise max.
     float val[token_per_reduce][ele_per_thread];
     float l_max[token_per_reduce];
     for (int i = 0; i < token_per_reduce; i++) {
       l_max[i] = REDUCE_FLOAT_INF_NEG;
       for (int j = 0; j < ele_per_thread; j++) {
         float temp_val;
+        // Causal mask: disallow attending to future positions (key index >
+        // current query index). Such entries become -inf, so softmax prob -> 0.
         if (mask_future && ele_per_thread * threadIdx.x + j > token_id + i) {
           temp_val = REDUCE_FLOAT_INF_NEG;
         } else {
           temp_val = (float)inp_val[i][j];
           if (attn_mask) {
+            // Padding/additive mask is added in logit space before softmax.
+            // Typical values: 0 (keep) or -inf (mask out).
             temp_val += (float)mval[j];
           }
         }
+        // Cache masked logit; reused in exp phase to avoid recomputing masks.
         val[i][j] = temp_val;
         l_max[i] = fmaxf(l_max[i], temp_val);
       }
     }
-    // warp reduce max
+    // One warp does the whole reduction for this small-length kernel.
+    // After this call, every lane has the same row max l_max[i].
     warpReduce<ReduceType::kMax, token_per_reduce>(l_max);
 
     /* step 2. compute sum */
-    // thread local sum
-    // use __expf() to compute exp
+    // Convert stabilized logits to unnormalized probabilities and accumulate
+    // partial sums locally.
     float l_sum[token_per_reduce];
     for (int i = 0; i < token_per_reduce; i++) {
       l_sum[i] = 0.f;
       for (int j = 0; j < ele_per_thread; j++) {
+        // __expf is a fast approximate exp suitable for deep learning kernels.
         val[i][j] = __expf(val[i][j] - l_max[i]);
         l_sum[i] += val[i][j];
       }
     }
-    // warp reduce sum
+    // Sum contributions from all lanes so each lane gets denominator Z.
     warpReduce<ReduceType::kSum, token_per_reduce>(l_sum);
 
     /* step 3. compute final result */
-    // use __fdividef() to compute division
-    // use BlockStore to store the result
+    // Final normalization. Multiply by reciprocal to avoid repeated divisions.
+    // EPSILON protects against division-by-zero in extreme all-masked cases.
     for (int i = 0; i < token_per_reduce && (token_id + i) < from_len; i++) {
       l_sum[i] = __fdividef(1.0f, l_sum[i] + EPSILON);
       for (int j = 0; j < ele_per_thread; j++) {
+        // val already holds exp(logit - max); scaling gives softmax output.
         inp_val[i][j] = (T)(val[i][j] * l_sum[i]);
       }
+      // Coalesced vectorized store back to [batch, head, query, key].
       BlockStore(ts_store).Store(inp + (token_id + i) * to_len, inp_val[i],
                                  to_len);
     }
@@ -150,7 +176,24 @@ __global__ void ker_attn_softmax(T *inp, const T *attn_mask, int from_len,
     /* step 1. compute max */
     // thread local max
     // BEGIN ASSIGN4_1_1
-    
+    float val[token_per_reduce][ele_per_thread];
+    float l_max[token_per_reduce];
+    for (int i = 0; i < token_per_reduce; i++) {
+      l_max[i] = REDUCE_FLOAT_INF_NEG;
+      for (int j = 0; j < ele_per_thread; j++) {
+        float temp_val;
+        if (mask_future && ele_per_thread * threadIdx.x + j > token_id + i) {
+          temp_val = REDUCE_FLOAT_INF_NEG;
+        } else {
+          temp_val = (float)inp_val[i][j];
+          if (attn_mask) {
+            temp_val += (float)mval[j];
+          }
+        }
+        val[i][j] = temp_val;
+        l_max[i] = fmaxf(l_max[i], temp_val);
+      }
+    }
     // END ASSIGN4_1_1
     // block reduce max
     blockReduce<ReduceType::kMax, token_per_reduce>(l_max);
@@ -166,7 +209,14 @@ __global__ void ker_attn_softmax(T *inp, const T *attn_mask, int from_len,
     /* step 2. compute sum */
     // thread local sum
     // BEGIN ASSIGN4_1_1
-    
+    float l_sum[token_per_reduce];
+    for (int i = 0; i < token_per_reduce; i++) {
+      l_sum[i] = 0.f;
+      for (int j = 0; j < ele_per_thread; j++) {
+        val[i][j] = __expf(val[i][j] - s_max[i]);
+        l_sum[i] += val[i][j];
+      }
+    }
     // END ASSIGN4_1_1
     // block reduce sum
     blockReduce<ReduceType::kSum, token_per_reduce>(l_sum);
@@ -181,7 +231,13 @@ __global__ void ker_attn_softmax(T *inp, const T *attn_mask, int from_len,
 
     /* step 3. compute final result */
     // BEGIN ASSIGN4_1_1
-   
+    for (int i = 0; i < token_per_reduce && (token_id + i) < from_len; i++) {
+      for (int j = 0; j < ele_per_thread; j++) {
+        inp_val[i][j] = (T)(val[i][j] * s_sum[i]);
+      }
+      BlockStore(ts_store).Store(inp + (token_id + i) * to_len, inp_val[i],
+                                 to_len);
+    }
     // END ASSIGN4_1_1
   }  // blockIdx.x
 }
@@ -269,8 +325,10 @@ grad: [batch_size, nhead, seq_len, seq_len], output grad.
 inp: [batch_size, nhead, seq_len, seq_len], **output** of softmax forward.
 */
 template <typename T, int ITERATIONS>
-__global__ void ker_attn_softmax_bw(T *grad, const T *inp, int softmax_length) {
+__global__ void ker_attn_softmax_bw(T *grad, const T *inp, int rows,
+                                    int softmax_length) {
   int batch_idx = blockIdx.x * blockDim.y + threadIdx.y;
+  if (batch_idx >= rows) return;
   int offset = batch_idx * softmax_length + threadIdx.x;
 
   grad += offset;
@@ -314,16 +372,65 @@ void launch_attn_softmax_bw(float *out_grad,
   dim3 grid_dim((rows + warps_per_block - 1) / warps_per_block);
   dim3 block_dim(WARP_SIZE, warps_per_block);
   // BEGIN ASSIGN4_1_2
-  
-  
+  int grad_size = rows * softmax_len * sizeof(float);
+  float *d_out_grad = nullptr;
+  float *d_soft_outp = nullptr;
+
+  cudaMalloc((void **)&d_out_grad, grad_size);
+  cudaMalloc((void **)&d_soft_outp, grad_size);
+
+  cudaMemcpy(d_out_grad, out_grad, grad_size, cudaMemcpyHostToDevice);
+  cudaMemcpy(d_soft_outp, soft_outp, grad_size, cudaMemcpyHostToDevice);
+
   // Launch kernel
   // Hint: use ker_attn_softmax_bw<float, ITERATIONS> depending on softmax_len
+  if (softmax_len <= 32) {
+    ker_attn_softmax_bw<float, 1><<<grid_dim, block_dim, 0, stream>>>(
+        d_out_grad, d_soft_outp, rows, softmax_len);
+  } else if (softmax_len <= 64) {
+    ker_attn_softmax_bw<float, 2><<<grid_dim, block_dim, 0, stream>>>(
+        d_out_grad, d_soft_outp, rows, softmax_len);
+  } else if (softmax_len <= 128) {
+    ker_attn_softmax_bw<float, 4><<<grid_dim, block_dim, 0, stream>>>(
+        d_out_grad, d_soft_outp, rows, softmax_len);
+  } else if (softmax_len <= 256) {
+    ker_attn_softmax_bw<float, 8><<<grid_dim, block_dim, 0, stream>>>(
+        d_out_grad, d_soft_outp, rows, softmax_len);
+  } else if (softmax_len <= 384) {
+    ker_attn_softmax_bw<float, 12><<<grid_dim, block_dim, 0, stream>>>(
+        d_out_grad, d_soft_outp, rows, softmax_len);
+  } else if (softmax_len <= 512) {
+    ker_attn_softmax_bw<float, 16><<<grid_dim, block_dim, 0, stream>>>(
+        d_out_grad, d_soft_outp, rows, softmax_len);
+  } else if (softmax_len <= 768) {
+    ker_attn_softmax_bw<float, 24><<<grid_dim, block_dim, 0, stream>>>(
+        d_out_grad, d_soft_outp, rows, softmax_len);
+  } else if (softmax_len <= 1024) {
+    ker_attn_softmax_bw<float, 32><<<grid_dim, block_dim, 0, stream>>>(
+        d_out_grad, d_soft_outp, rows, softmax_len);
+  } else if (softmax_len <= 2048) {
+    ker_attn_softmax_bw<float, 64><<<grid_dim, block_dim, 0, stream>>>(
+        d_out_grad, d_soft_outp, rows, softmax_len);
+  } else {
+    throw std::runtime_error(
+        "Sequence length greater than 2048 is currently not supported");
+  }
   
   // Copy back to the host
-  
-  
+  cudaStreamSynchronize(stream);
+  cudaMemcpy(out_grad, d_out_grad, grad_size, cudaMemcpyDeviceToHost);
+  cudaDeviceSynchronize();
+
+  cudaError_t err = cudaGetLastError();
+  if (err != cudaSuccess) {
+    fprintf(stderr, "launch_attn_softmax_bw Error: %s\n",
+            cudaGetErrorString(err));
+    exit(EXIT_FAILURE);
+  }
 
   // Free memory on device
+  cudaFree(d_out_grad);
+  cudaFree(d_soft_outp);
   // END ASSIGN4_1_2
 
 }}

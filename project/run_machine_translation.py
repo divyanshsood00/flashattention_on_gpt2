@@ -7,7 +7,6 @@ import json
 import random
 import datasets
 import numpy as np
-import argparse
 from distutils.util import strtobool
 
 from sacrebleu.metrics import BLEU
@@ -73,10 +72,11 @@ def get_tokenizer(examples, vocab_size, src_key, tgt_key, workdir):
 
     tokenizer = AutoTokenizer.from_pretrained(
         workdir,
-        eos_token=None,
+        eos_token=f'<eos_{tgt_key}>',
         bos_token=None,
-        pad_token=None,
-        unk_token=None)
+        pad_token='<pad>',
+        unk_token=None,
+        additional_special_tokens=[f'<eos_{src_key}>'])
 
     return tokenizer
 
@@ -112,7 +112,7 @@ def collate_batch(
     between the source (weight = 0) and target (weight = 1) tokens for loss
     """
     token_ids, tgt_token_mask = [], []
-    pad_token_id = tokenizer.vocab['<pad>']
+    pad_token_id = tokenizer.convert_tokens_to_ids('<pad>')
     for example in examples:
         # token_ids_src = <de_token_ids> + <de_eos_id>
         token_ids_src = tokenizer(
@@ -121,16 +121,28 @@ def collate_batch(
         token_ids_tgt = tokenizer(
             f'{example[tgt_key]}<eos_{tgt_key}>')['input_ids']
 
-        # COPY FROM ASSIGN2_5
-        raise NotImplementedError("Collate Function Not Implemented Yet")
+        ids = token_ids_src + token_ids_tgt
+        # Source tokens are masked out in the loss; target tokens contribute.
+        weights = [0.0] * len(token_ids_src) + [1.0] * len(token_ids_tgt)
 
-    # COPY FROM ASSIGN2_5
-    raise NotImplementedError("Collate Function Not Implemented Yet")
+        ids = ids[:model_max_length]
+        weights = weights[:model_max_length]
+
+        pad_len = model_max_length - len(ids)
+        if pad_len > 0:
+            ids = ids + [pad_token_id] * pad_len
+            weights = weights + [0.0] * pad_len
+
+        token_ids.append(ids)
+        tgt_token_mask.append(weights)
+
+    labels = [ids[1:] + [pad_token_id] for ids in token_ids]
+    label_token_weights = [mask[1:] + [0.0] for mask in tgt_token_mask]
 
     return {
-        'input_ids': minitorch.zeros((len(examples), model_max_length)),
-        'labels': minitorch.zeros((len(examples), model_max_length)),
-        'label_token_weights': minitorch.zeros((len(examples), model_max_length))
+        'input_ids': minitorch.tensor(token_ids, backend=backend),
+        'labels': minitorch.tensor(labels, backend=backend),
+        'label_token_weights': minitorch.tensor(label_token_weights, backend=backend)
     }
 
 
@@ -153,7 +165,31 @@ def loss_fn(batch, model):
     batch_size, seq_len, vocab_size = logits.shape
     
     # COPY FROM ASSIGN2_5
-    raise NotImplementedError("Loss Function Not Implemented Yet")
+    # raise NotImplementedError("Loss Function Not Implemented Yet")
+    idx = batch['input_ids']
+    # Don't set requires_grad here - it should be handled by the model
+    # print("getting into loss_fn")
+    logits = model(idx=idx)
+    # print("finish prediction")
+    bs, l, c = logits.shape
+    logits = logits.view(bs * l, c)
+    
+    # CRITICAL FIX: Detach targets and weights to prevent gradient flow
+    # These should NEVER participate in backpropagation
+    targets = batch['labels'].view(bs * l).detach()
+    label_token_weights = batch['label_token_weights'].view(bs * l).detach()
+
+    # IMPORTANT: targets should NEVER require gradients - this was causing a memory leak
+    # print("start calculating loss")
+    # import pdb
+    # pdb.set_trace()
+    loss = minitorch.nn.softmax_loss(
+        logits=logits,
+        target=targets
+    )
+
+    return ((loss * label_token_weights).sum() / label_token_weights.sum())
+
 
 
 def train(model, optimizer, examples, n_samples, collate_fn, batch_size, desc):
@@ -188,13 +224,10 @@ def train(model, optimizer, examples, n_samples, collate_fn, batch_size, desc):
             lr=optimizer.lr)
 
 
-def parse_args():
-    def str2bool(x):
-        return bool(strtobool(x))
-        
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--use-fused-kernel', type=str2bool, default=False)
-    return parser.parse_args()
+def _to_bool(value):
+    if isinstance(value, bool):
+        return value
+    return bool(strtobool(str(value)))
 
 
 def main(dataset_name='bbaaaa/iwslt14-de-en-preprocess',
@@ -205,8 +238,9 @@ def main(dataset_name='bbaaaa/iwslt14-de-en-preprocess',
          samples_per_epoch=20000,
          n_vocab=10000,
          n_embd=256,
-         seed=11111):
-    args = parse_args()
+        seed=11111,
+        use_fused_kernel=False):
+    use_fused_kernel = _to_bool(use_fused_kernel)
              
     np.random.seed(seed)
     random.seed(seed)
@@ -225,7 +259,7 @@ def main(dataset_name='bbaaaa/iwslt14-de-en-preprocess',
         'p_dropout'   : 0.1,  # x_pdrop
         'ln_eps'      : 1e-5, # layer_norm_epsilon
         'backend'     : backend,
-        'use_fused_kernel': args.use_fused_kernel
+        'use_fused_kernel': use_fused_kernel
     }
 
     model = DecoderLM(**config)
@@ -262,5 +296,4 @@ def main(dataset_name='bbaaaa/iwslt14-de-en-preprocess',
             desc=desc)
 
 
-if __name__ == '__main__':
-    fire.Fire(main)
+fire.Fire(main)

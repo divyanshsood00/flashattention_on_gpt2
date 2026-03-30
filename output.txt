@@ -1,0 +1,54 @@
+(cuda121) divyanshsood@fedora:~/Documents/llm/llmsys_hw4$ time python -m project.run_machine_translation --use-fused-kernel False
+Using the latest cached version of the dataset since bbaaaa/iwslt14-de-en-preprocess couldn't be found on the Hugging Face Hub
+Found the latest cached dataset configuration 'de-en' at /home/divyanshsood/.cache/huggingface/datasets/bbaaaa___iwslt14-de-en-preprocess/de-en/1.0.0/c56d7dc0dcc7c6e27d0a917a0ab0f40083999465 (last modified on Tue Feb 17 00:50:22 2026).
+Using the latest cached version of the dataset since bbaaaa/iwslt14-de-en-preprocess couldn't be found on the Hugging Face Hub
+Found the latest cached dataset configuration 'de-en' at /home/divyanshsood/.cache/huggingface/datasets/bbaaaa___iwslt14-de-en-preprocess/de-en/1.0.0/c56d7dc0dcc7c6e27d0a917a0ab0f40083999465 (last modified on Tue Feb 17 00:50:22 2026).
+Using the latest cached version of the dataset since bbaaaa/iwslt14-de-en-preprocess couldn't be found on the Hugging Face Hub
+Found the latest cached dataset configuration 'de-en' at /home/divyanshsood/.cache/huggingface/datasets/bbaaaa___iwslt14-de-en-preprocess/de-en/1.0.0/c56d7dc0dcc7c6e27d0a917a0ab0f40083999465 (last modified on Tue Feb 17 00:50:22 2026).
+{
+    "data_size": {
+        "train": 97976,
+        "validation": 4512,
+        "test": 100
+    }
+}
+[00:00:00] Pre-processing sequences       ████████████████████████████████████████████████████████████████████████████ 0        /        0
+[00:00:00] Tokenize words                 ████████████████████████████████████████████████████████████████████████████ 87929    /    87929
+[00:00:00] Count pairs                    ████████████████████████████████████████████████████████████████████████████ 87929    /    87929
+[00:00:00] Compute merges                 ████████████████████████████████████████████████████████████████████████████ 9741     /     9741
+Training (epoch 0 / 1):   8%|███                                  | 13/157 [02:57<32:41, 13.62s/it, loss=nan, lr=0.02, tokens_per_sec=377]Training (epoch 0 / 1):  22%|████████▏                            | 35/157 [07:56<27:35, 13.57s/it, loss=nan, lr=0.02, tokens_per_sec=377]
+Training (epoch 0 / 1):  36%|█████████████▏                       | 56/157 [12:41<22:53, 13.60s/it, loss=nan, lr=0.02, tokens_per_sec=375]
+Training (epoch 0 / 1): 100%|████████████████████████████████████| 157/157 [35:24<00:00, 13.53s/it, loss=nan, lr=0.02, tokens_per_sec=282]
+
+real    35m30.807s
+user    31m19.789s
+sys     4m6.119s
+(cuda121) divyanshsood@fedora:~/Documents/llm/llmsys_hw4$ ter
+bash: ter: command not found...
+(cuda121) divyanshsood@fedora:~/Documents/llm/llmsys_hw4$ 
+(cuda121) divyanshsood@fedora:~/Documents/llm/llmsys_hw4$ time python -m project.run_machine_translation --use-fused-kernel True
+Using the latest cached version of the dataset since bbaaaa/iwslt14-de-en-preprocess couldn't be found on the Hugging Face Hub
+Found the latest cached dataset configuration 'de-en' at /home/divyanshsood/.cache/huggingface/datasets/bbaaaa___iwslt14-de-en-preprocess/de-en/1.0.0/c56d7dc0dcc7c6e27d0a917a0ab0f40083999465 (last modified on Tue Feb 17 00:50:22 2026).
+Using the latest cached version of the dataset since bbaaaa/iwslt14-de-en-preprocess couldn't be found on the Hugging Face Hub
+Found the latest cached dataset configuration 'de-en' at /home/divyanshsood/.cache/huggingface/datasets/bbaaaa___iwslt14-de-en-preprocess/de-en/1.0.0/c56d7dc0dcc7c6e27d0a917a0ab0f40083999465 (last modified on Tue Feb 17 00:50:22 2026).
+Using the latest cached version of the dataset since bbaaaa/iwslt14-de-en-preprocess couldn't be found on the Hugging Face Hub
+Found the latest cached dataset configuration 'de-en' at /home/divyanshsood/.cache/huggingface/datasets/bbaaaa___iwslt14-de-en-preprocess/de-en/1.0.0/c56d7dc0dcc7c6e27d0a917a0ab0f40083999465 (last modified on Tue Feb 17 00:50:22 2026).
+{
+    "data_size": {
+        "train": 97976,
+        "validation": 4512,
+        "test": 100
+    }
+}
+[00:00:00] Pre-processing sequences       ████████████████████████████████████████████████████████████████████████████ 0        /        0
+[00:00:00] Tokenize words                 ████████████████████████████████████████████████████████████████████████████ 87929    /    87929
+[00:00:00] Count pairs                    ████████████████████████████████████████████████████████████████████████████ 87929    /    87929
+[00:00:00] Compute merges                 ████████████████████████████████████████████████████████████████████████████ 9741     /     9741
+Training (epoch 0 / 1):  13%|████▌                               | 20/157 [03:58<27:03, 11.85s/it, loss=6.52, lr=0.02, tokens_per_sec=435]
+Training (epoch 0 / 1):  19%|██████▉                             | 30/157 [05:56<24:49, 11.73s/it, loss=6.21, lr=0.02, tokens_per_sec=441]
+Training (epoch 0 / 1):  24%|████████▍                           | 37/157 [07:19<23:44, 11.87s/it, loss=6.14, lr=0.02, tokens_per_sec=426]
+Training (epoch 0 / 1): 100%|███████████████████████████████████| 157/157 [30:46<00:00, 11.76s/it, loss=5.34, lr=0.02, tokens_per_sec=323]
+
+real    30m53.462s
+user    27m26.150s
+sys     3m34.249s

@@ -34,8 +34,10 @@ class Embedding(Module):
         self.embedding_dim  = embedding_dim  # Embedding Dimension
         
         # COPY FROM ASSIGN2_3
-        raise NotImplementedError
-    
+        w = np.random.standard_normal((num_embeddings, embedding_dim)).astype(np.float32)
+        self.weights = Parameter(tensor_from_numpy(w, backend=backend))
+        # END ASSIGN2_3  
+      
     def forward(self, x: Tensor):
         """Maps word indices to one-hot vectors, and projects to embedding vectors.
 
@@ -48,8 +50,16 @@ class Embedding(Module):
         bs, seq_len = x.shape
         
         # COPY FROM ASSIGN2_3
-        raise NotImplementedError
-
+        # Convert indices to one-hot: shape (bs, seq_len, num_embeddings)
+        oh = one_hot(x, self.num_embeddings)
+        # Reshape to (bs * seq_len, num_embeddings)
+        oh2 = oh.view(bs * seq_len, self.num_embeddings)
+        # Matrix multiply with weights: (bs * seq_len, num_embeddings) @ (num_embeddings, embedding_dim)
+        # Results in: (bs * seq_len, embedding_dim)
+        out = oh2 @ self.weights.value
+        # Reshape back to (bs, seq_len, embedding_dim)
+        out = out.view(bs, seq_len, self.embedding_dim)
+        return out
     
 class Dropout(Module):
     def __init__(self, p_dropout: float=0.1):
@@ -71,8 +81,13 @@ class Dropout(Module):
             output : Tensor of shape (*)
         """
         # COPY FROM ASSIGN2_3
-        raise NotImplementedError
-
+        if (not self.training) or (self.p_dropout == 0.0):
+            return x
+        # Use numpy's RNG (respects np.random.seed set by tests) to create mask
+        rnd = np.random.random(x.shape).astype(np.float32)
+        r = tensor_from_numpy(rnd, backend=x.backend)
+        mask = r > self.p_dropout
+        return x * mask / (1.0 - self.p_dropout)
 
 class Linear(Module):
     def __init__(self, in_size: int, out_size: int, bias: bool, backend: TensorBackend):
@@ -89,9 +104,15 @@ class Linear(Module):
             bias   - The learnable weights of shape (out_size, ) initialized from Uniform(-1/sqrt(1/in_size), 1/sqrt(1/in_size)).
         """
         self.out_size = out_size
-        
         # COPY FROM ASSIGN2_3
-        raise NotImplementedError
+        bound = 1.0 / np.sqrt(in_size)
+        w = np.random.uniform(-bound, bound, (in_size, out_size)).astype(np.float32)
+        self.weights = Parameter(tensor_from_numpy(w, backend=backend))
+        if bias:
+            b = np.random.uniform(-bound, bound, (out_size,)).astype(np.float32)
+            self.bias = Parameter(tensor_from_numpy(b, backend=backend))
+        else:
+            self.bias = None
 
     def forward(self, x: Tensor):
         """Applies a linear transformation to the incoming data.
@@ -105,8 +126,11 @@ class Linear(Module):
         batch, in_size = x.shape
         
         # COPY FROM ASSIGN2_3
-        raise NotImplementedError
-
+        # Use matrix multiplication: (batch, in_size) @ (in_size, out_size) -> (batch, out_size)
+        out = x @ self.weights.value
+        if self.bias is not None:
+            out = out + self.bias.value.view(1, self.out_size)
+        return out
 
 class LayerNorm1d(Module):
     def __init__(self, dim: int, eps: float, backend: TensorBackend):
@@ -125,8 +149,10 @@ class LayerNorm1d(Module):
         self.eps = eps
         
         # COPY FROM ASSIGN2_3
-        raise NotImplementedError
-
+        # Initialize scale (gamma) to ones and shift (beta) to zeros
+        self.weights = Parameter(ones_tensor_from_numpy((dim,), backend=backend))
+        self.bias = Parameter(zeros_tensor_from_numpy((dim,), backend=backend))
+        
     def forward(self, x: Tensor) -> Tensor:
         """Applies Layer Normalization over a mini-batch of inputs. 
         NOTE: You can assume the input to this layer is a 2D tensor of shape (batch_size, dim)
@@ -141,4 +167,10 @@ class LayerNorm1d(Module):
         batch, dim = x.shape
         
         # COPY FROM ASSIGN2_3
-        raise NotImplementedError
+        # Compute mean and variance over last dimension
+        mean = x.mean(dim=1).view(batch, 1)
+        var = x.var(dim=1).view(batch, 1)
+        x_norm = (x - mean) / (var + self.eps) ** 0.5
+        # Apply learnable scale and bias (broadcast over batch)
+        return x_norm * self.weights.value.view(1, self.dim) + self.bias.value.view(1, self.dim)
+        

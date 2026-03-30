@@ -205,12 +205,13 @@ def layer_norm(input: Tensor, eps: float = 1e-5) -> Tensor:
 # Assignment 2 Problem 2
 ###############################################################################
 
-def GELU(input: Tensor) -> Tensor: 
+def GELU(input: Tensor) -> Tensor:
     """Applies the GELU activation function with 'tanh' approximation element-wise
     https://pytorch.org/docs/stable/generated/torch.nn.GELU.html
     """
     # COPY FROM ASSIGN2_2
-    raise NotImplementedError
+    return 0.5 * input * (1 + (np.sqrt(2 / math.pi) * (input + 0.044715 * (input ** 3))).tanh())
+
 
 
 def logsumexp(input: Tensor, dim: int) -> Tensor:
@@ -226,8 +227,11 @@ def logsumexp(input: Tensor, dim: int) -> Tensor:
             NOTE: minitorch functions/tensor functions typically keep dimensions if you provide a dimensions.
     """  
     # COPY FROM ASSIGN2_2
-    raise NotImplementedError
-
+    input_max = max(input, dim)
+    input_stable = input - input_max
+    sum_exp = input_stable.exp().sum(dim=dim)
+    out = input_max + sum_exp.log() 
+    return out
 
 def one_hot(input: Tensor, num_classes: int) -> Tensor:
     """Takes a Tensor containing indices of shape (*) and returns a tensor of shape (*, num_classes) 
@@ -237,7 +241,11 @@ def one_hot(input: Tensor, num_classes: int) -> Tensor:
     Hint: You may want to use a combination of np.eye, tensor_from_numpy, 
     """
     # COPY FROM ASSIGN2_2
-    raise NotImplementedError
+    return tensor_from_numpy(
+                np.eye(num_classes)[input.to_numpy().astype(int)], 
+                backend=input.backend
+            )
+
 
 
 def softmax_loss(logits: Tensor, target: Tensor) -> Tensor:
@@ -250,10 +258,18 @@ def softmax_loss(logits: Tensor, target: Tensor) -> Tensor:
 
     Returns: 
         loss : (minibatch, )
-    """
-    result = None
-    
+    """    
     # COPY FROM ASSIGN2_2
-    raise NotImplementedError
+    # 1. Calculate the first term: LogSumExp(z)
+    # Shape: (batch_size, 1) assuming keepdims=True behavior mentioned in docstring
+    lse = logsumexp(logits, dim=1)
     
+    # 2. Calculate the second term: z_y (the true class logits)
+    # We must gather from the ORIGINAL logits, not the reduced LSE
+    true_logits = (logits * one_hot(target, logits.shape[1])).sum(dim=1)
+    
+    # 3. Apply formula: LSE - z_y
+    # Result shape: (batch_size, 1)
+    result = lse - true_logits
+    batch_size = logits.shape[0]
     return result.view(batch_size, )

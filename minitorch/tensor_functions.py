@@ -416,6 +416,50 @@ class LayerNorm(Function):
       #   END ASSIGN4_2_2
 
 
+class FlashAttention(Function):
+    @staticmethod
+    def forward(ctx: Context, q: Tensor, kT: Tensor, v: Tensor, causal_flag: Tensor) -> Tensor:
+        q_c = q.contiguous()
+        kT_c = kT.contiguous()
+        v_c = v.contiguous()
+        causal = bool(int(causal_flag.item()))
+        out, lse = q_c.f.flash_attention_fw(q_c, kT_c, v_c, causal)
+        ctx.save_for_backward(q_c, kT_c, v_c, out, lse, causal_flag)
+        return out
+
+    @staticmethod
+    def backward(ctx: Context, out_grad: Tensor) -> Tensor:
+        q, kT, v, _out, _lse, causal_flag = ctx.saved_values
+        causal = bool(int(causal_flag.item()))
+
+        batch_size, nhead, seq_len, head_dim = q.shape
+        scale = 1.0 / np.sqrt(head_dim)
+
+        scores = (q @ kT) * scale
+        if causal:
+            causal_mask_np = -np.finfo(datatype).max * np.triu(
+                np.ones((batch_size, nhead, seq_len, seq_len), dtype=datatype),
+                1,
+            )
+            causal_mask = tensor_from_numpy(causal_mask_np, backend=q.backend)
+            scores = scores + causal_mask
+
+        probs = minitorch.nn.softmax(scores, dim=3)
+
+        v_t = v.permute(0, 1, 3, 2)
+        d_probs = out_grad @ v_t
+        dot = (d_probs * probs).sum(dim=3).view(batch_size, nhead, seq_len, 1)
+        d_scores = probs * (d_probs - dot)
+
+        k = kT.permute(0, 1, 3, 2)
+        d_q = (d_scores @ k) * scale
+        d_k = (d_scores.permute(0, 1, 3, 2) @ q) * scale
+        d_kT = d_k.permute(0, 1, 3, 2)
+        d_v = probs.permute(0, 1, 3, 2) @ out_grad
+
+        return d_q, d_kT, d_v, 0.0
+
+
 # Helpers for Constructing tensors
 def zeros(shape: UserShape, backend: TensorBackend = SimpleBackend) -> Tensor:
     """

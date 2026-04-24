@@ -37,6 +37,7 @@ from .tensor_functions import (
     Tanh,
     Attn_Softmax,
     LayerNorm,
+    FlashAttention,
 )
 
 if TYPE_CHECKING:
@@ -421,7 +422,11 @@ class Tensor:
         self.grad = None
 
     def attn_softmax(self, mask: Tensor) -> Tensor:
-      return Attn_Softmax.apply(self, mask)
+        return Attn_Softmax.apply(self, mask)
 
     def layernorm(self, gamma: Tensor, beta: Tensor) -> Tensor:
-      return LayerNorm.apply(self, gamma, beta)
+        return LayerNorm.apply(self, gamma, beta)
+
+    def flash_attention(self, kT: Tensor, v: Tensor, causal: bool = True) -> Tensor:
+        causal_flag = tensor([1.0 if causal else 0.0], backend=self.backend)
+        return FlashAttention.apply(self, kT, v, causal_flag)

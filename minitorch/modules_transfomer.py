@@ -20,7 +20,17 @@ datatype = np.float32
 
 
 class MultiHeadAttention(Module):
-    def __init__(self, n_embd: int, n_head: int, causal: bool=False, p_dropout: float=0.1, bias: bool=True, backend: TensorBackend=None, use_fused_kernel: bool=False):
+    def __init__(
+        self,
+        n_embd: int,
+        n_head: int,
+        causal: bool=False,
+        p_dropout: float=0.1,
+        bias: bool=True,
+        backend: TensorBackend=None,
+        use_fused_kernel: bool=False,
+        use_flash_attention: Optional[bool]=None,
+    ):
         super().__init__()
         """Implements Multi-Head Attention as described in "Attention Is All You Need"
 
@@ -43,6 +53,7 @@ class MultiHeadAttention(Module):
         self.n_head    = n_head
         self.causal    = causal
         self.use_fused_kernel = use_fused_kernel
+        self.use_flash_attention = use_fused_kernel if use_flash_attention is None else use_flash_attention
         self.attn_hidden_dim = n_embd // n_head
 
         # COPY FROM ASSIGN2_4
@@ -115,12 +126,20 @@ class MultiHeadAttention(Module):
         assert q_dim == k_dim == v_dim
         result = None
 
+        can_use_flash = self.use_flash_attention and (self.p_dropout == 0.0 or not self.training)
+        if can_use_flash:
+            try:
+                out = q.contiguous().flash_attention(kT.contiguous(), v.contiguous(), causal=self.causal)
+                result = out.permute(0, 2, 1, 3).contiguous().view(batch_size, queries_len, self.n_embd)
+                return result
+            except RuntimeError:
+                pass
+
         # 1. Scaled dot-product
         scores = (q @ kT) / np.sqrt(q_dim)
 
-        # 3. Softmax and Dropout
+        # 2. Softmax and optional fused softmax kernel
         if self.use_fused_kernel:
-            # Fused path: pass mask separately; kernel adds mask + softmax in one pass
             if self.causal:
                 mask = self.create_causal_mask(batch_size, num_head, queries_len)
             else:
@@ -130,14 +149,13 @@ class MultiHeadAttention(Module):
                 )
             attn_weights = scores.attn_softmax(mask)
         else:
-            # 2. Apply Causal Mask if enabled
             if self.causal:
                 mask = self.create_causal_mask(batch_size, num_head, queries_len)
                 scores = scores + mask
             attn_weights = softmax(scores, dim=3)
         attn_weights = self.dropout(attn_weights)
 
-        # 4. Weighted Sum + 5. Concatenate heads
+        # 3. Weighted sum and head merge
         out = attn_weights @ v
         result = out.permute(0, 2, 1, 3).contiguous().view(batch_size, queries_len, self.n_embd)
 
@@ -206,7 +224,17 @@ class FeedForward(Module):
         return x
 
 class TransformerLayer(Module):
-    def __init__(self, n_embd: int, n_head: int, p_dropout: float=0.1, ln_eps: float=1e-8, bias: bool=True, backend: TensorBackend=None, use_fused_kernel: bool=False):
+    def __init__(
+        self,
+        n_embd: int,
+        n_head: int,
+        p_dropout: float=0.1,
+        ln_eps: float=1e-8,
+        bias: bool=True,
+        backend: TensorBackend=None,
+        use_fused_kernel: bool=False,
+        use_flash_attention: Optional[bool]=None,
+    ):
         super().__init__()
         """A Transformer Layer in a Pre-LN Transformer.
 
@@ -231,6 +259,7 @@ class TransformerLayer(Module):
 
         self.n_embd = n_embd
         self.use_fused_kernel = use_fused_kernel
+        self.use_flash_attention = use_flash_attention
         self.ln_1 = LayerNorm1d(n_embd, eps=ln_eps, backend=backend)
         self.ln_2 = LayerNorm1d(n_embd, eps=ln_eps, backend=backend)
         self.attention = MultiHeadAttention(
@@ -241,6 +270,7 @@ class TransformerLayer(Module):
             bias=bias,
             backend=backend,
             use_fused_kernel=use_fused_kernel,
+            use_flash_attention=use_flash_attention,
         )
         self.ff = FeedForward(n_embd, middle_dim=4 * n_embd, p_dropout=p_dropout, bias=bias, backend=backend)
 
@@ -287,6 +317,7 @@ class DecoderLM(Module):
         bias: bool=True,
         backend: TensorBackend=None,
         use_fused_kernel: bool=False,
+        use_flash_attention: Optional[bool]=None,
     ):
         super().__init__()
         """A Full Decoder-only Pre-LN Transformer with 4 Transformer Layers.
@@ -327,13 +358,50 @@ class DecoderLM(Module):
         # raise NotImplementedError
 
         self.use_fused_kernel = use_fused_kernel
+        self.use_flash_attention = use_flash_attention
         self.token_embeddings = Embedding(n_vocab, n_embd, backend=backend)
         self.position_embeddings = Embedding(n_positions, n_embd, backend=backend)
 
-        self.t_layer_1 = TransformerLayer(n_embd, n_head, p_dropout, ln_eps, bias, backend, use_fused_kernel=use_fused_kernel)
-        self.t_layer_2 = TransformerLayer(n_embd, n_head, p_dropout, ln_eps, bias, backend, use_fused_kernel=use_fused_kernel)
-        self.t_layer_3 = TransformerLayer(n_embd, n_head, p_dropout, ln_eps, bias, backend, use_fused_kernel=use_fused_kernel)
-        self.t_layer_4 = TransformerLayer(n_embd, n_head, p_dropout, ln_eps, bias, backend, use_fused_kernel=use_fused_kernel)
+        self.t_layer_1 = TransformerLayer(
+            n_embd,
+            n_head,
+            p_dropout,
+            ln_eps,
+            bias,
+            backend,
+            use_fused_kernel=use_fused_kernel,
+            use_flash_attention=use_flash_attention,
+        )
+        self.t_layer_2 = TransformerLayer(
+            n_embd,
+            n_head,
+            p_dropout,
+            ln_eps,
+            bias,
+            backend,
+            use_fused_kernel=use_fused_kernel,
+            use_flash_attention=use_flash_attention,
+        )
+        self.t_layer_3 = TransformerLayer(
+            n_embd,
+            n_head,
+            p_dropout,
+            ln_eps,
+            bias,
+            backend,
+            use_fused_kernel=use_fused_kernel,
+            use_flash_attention=use_flash_attention,
+        )
+        self.t_layer_4 = TransformerLayer(
+            n_embd,
+            n_head,
+            p_dropout,
+            ln_eps,
+            bias,
+            backend,
+            use_fused_kernel=use_fused_kernel,
+            use_flash_attention=use_flash_attention,
+        )
 
         self.dropout = Dropout(p_dropout)
         self.ln = LayerNorm1d(n_embd, eps=ln_eps, backend=backend)

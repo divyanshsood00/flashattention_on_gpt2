@@ -1,0 +1,36 @@
+{
+  "task": "numerical_correctness",
+  "dtype": "fp32",
+  "shape": {
+    "batch_size": 1,
+    "nhead": 2,
+    "seq_len": 8,
+    "head_dim": 16
+  },
+  "forward_max_abs_error": 3.5762786865234375e-07,
+  "forward_threshold": 0.001,
+  "forward_pass": true,
+  "finite_difference": {
+    "eps": 0.001,
+    "per_tensor": {
+      "q": {
+        "max_abs_error": 0.0031661950051784515,
+        "mean_abs_error": 0.0013684515142813325,
+        "n_samples": 12
+      },
+      "k_t": {
+        "max_abs_error": 0.005328178405761719,
+        "mean_abs_error": 0.0016095155151560903,
+        "n_samples": 12
+      },
+      "v": {
+        "max_abs_error": 0.0008968152105808258,
+        "mean_abs_error": 0.0004524078976828605,
+        "n_samples": 12
+      }
+    },
+    "max_abs_error": 0.005328178405761719,
+    "threshold": 0.02,
+    "pass": true
+  }
+}

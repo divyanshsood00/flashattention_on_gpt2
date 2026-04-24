@@ -224,6 +224,73 @@ def train(model, optimizer, examples, n_samples, collate_fn, batch_size, desc):
             lr=optimizer.lr)
 
 
+def greedy_translate(model, tokenizer, source_text, src_key, tgt_key, model_max_length, backend):
+    """Greedy-decode an English translation from a German source sentence."""
+    pad_id = tokenizer.convert_tokens_to_ids('<pad>')
+    eos_src_id = tokenizer.convert_tokens_to_ids(f'<eos_{src_key}>')
+    eos_tgt_id = tokenizer.convert_tokens_to_ids(f'<eos_{tgt_key}>')
+
+    prompt_ids = tokenizer(source_text)['input_ids'] + [eos_src_id]
+    if len(prompt_ids) >= model_max_length:
+        prompt_ids = prompt_ids[:max(1, model_max_length - 1)]
+
+    ids = prompt_ids.copy()
+    generated_tgt = []
+
+    while len(ids) < model_max_length:
+        model_input = ids + [pad_id] * (model_max_length - len(ids))
+        idx = minitorch.tensor([model_input], backend=backend)
+        logits = model(idx=idx)
+        next_pos = len(ids) - 1
+        next_id = int(np.argmax(logits.to_numpy()[0, next_pos, :]))
+
+        ids.append(next_id)
+        generated_tgt.append(next_id)
+        if next_id == eos_tgt_id:
+            break
+
+    if eos_tgt_id in generated_tgt:
+        generated_tgt = generated_tgt[:generated_tgt.index(eos_tgt_id)]
+
+    return tokenizer.decode(generated_tgt, skip_special_tokens=True).strip()
+
+
+def evaluate_bleu(model, examples, tokenizer, src_key, tgt_key, model_max_length, backend, n_samples=100):
+    """Compute corpus BLEU on a subset of examples using greedy decoding."""
+    bleu_metric = BLEU()
+    n_eval = min(n_samples, len(examples))
+
+    was_training = model.training
+    model.eval()
+
+    hypotheses = []
+    references = []
+
+    for example in tqdm.tqdm(examples[:n_eval], desc='Evaluating BLEU'):
+        hypotheses.append(
+            greedy_translate(
+                model=model,
+                tokenizer=tokenizer,
+                source_text=example[src_key],
+                src_key=src_key,
+                tgt_key=tgt_key,
+                model_max_length=model_max_length,
+                backend=backend,
+            )
+        )
+        references.append(example[tgt_key])
+
+    score = bleu_metric.corpus_score(hypotheses, [references]).score
+
+    if was_training:
+        model.train()
+
+    return {
+        'bleu': float(score),
+        'n_samples': int(n_eval),
+    }
+
+
 def _to_bool(value):
     if isinstance(value, bool):
         return value
@@ -234,13 +301,19 @@ def main(dataset_name='bbaaaa/iwslt14-de-en-preprocess',
          model_max_length=40,
          n_epochs=1,
          batch_size=128,
-         learning_rate=0.02,
+         learning_rate=0.002,
          samples_per_epoch=20000,
          n_vocab=10000,
          n_embd=256,
-        seed=11111,
-        use_fused_kernel=False):
+         seed=11111,
+         use_fused_kernel=False,
+         use_flash_attention=None,
+         attention_dropout=0.1,
+         eval_bleu=False,
+         bleu_split='test',
+         bleu_samples=100):
     use_fused_kernel = _to_bool(use_fused_kernel)
+    use_flash_attention = use_fused_kernel if use_flash_attention is None else _to_bool(use_flash_attention)
              
     np.random.seed(seed)
     random.seed(seed)
@@ -256,11 +329,18 @@ def main(dataset_name='bbaaaa/iwslt14-de-en-preprocess',
         'n_head'      : 8,    # n_head
         'n_positions' : model_max_length,  # n_ctx == n_positions
         # 'n_layer'     : 4,    # n_layer
-        'p_dropout'   : 0.1,  # x_pdrop
+        'p_dropout'   : attention_dropout,  # x_pdrop
         'ln_eps'      : 1e-5, # layer_norm_epsilon
         'backend'     : backend,
-        'use_fused_kernel': use_fused_kernel
+        'use_fused_kernel': use_fused_kernel,
+        'use_flash_attention': use_flash_attention,
     }
+
+    if use_flash_attention and attention_dropout > 0.0:
+        print(
+            "[warning] FlashAttention path is enabled only when attention_dropout=0.0 "
+            "or model.eval(). Falling back to standard attention-softmax for training dropout."
+        )
 
     model = DecoderLM(**config)
     optimizer = minitorch.Adam(model.parameters(), lr=learning_rate)
@@ -295,5 +375,30 @@ def main(dataset_name='bbaaaa/iwslt14-de-en-preprocess',
             collate_fn=collate_fn,
             desc=desc)
 
+    results = {
+        'workdir': workdir,
+        'use_fused_kernel': bool(use_fused_kernel),
+        'use_flash_attention': bool(use_flash_attention),
+        'attention_dropout': float(attention_dropout),
+    }
 
-fire.Fire(main)
+    if _to_bool(eval_bleu):
+        if bleu_split not in dataset:
+            raise ValueError(f"Unknown bleu_split '{bleu_split}'. Available splits: {list(dataset.keys())}")
+        bleu_result = evaluate_bleu(
+            model=model,
+            examples=dataset[bleu_split],
+            tokenizer=tokenizer,
+            src_key=src_key,
+            tgt_key=tgt_key,
+            model_max_length=model_max_length,
+            backend=backend,
+            n_samples=int(bleu_samples),
+        )
+        results['bleu'] = bleu_result
+
+    print(json.dumps(results, indent=2))
+    return results
+
+if __name__ == '__main__':
+    fire.Fire(main)

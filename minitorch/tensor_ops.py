@@ -47,6 +47,26 @@ class TensorOps:
     def matrix_multiply(a: Tensor, b: Tensor) -> Tensor:
         raise NotImplementedError("Not implemented in this assignment")
 
+    @staticmethod
+    def attn_softmax_fw(inp: Tensor, mask: Tensor):
+        raise NotImplementedError("Not implemented in this assignment")
+
+    @staticmethod
+    def attn_softmax_bw():
+        raise NotImplementedError("Not implemented in this assignment")
+
+    @staticmethod
+    def layernorm_fw(inp: Tensor):
+        raise NotImplementedError("Not implemented in this assignment")
+
+    @staticmethod
+    def layernorm_bw():
+        raise NotImplementedError("Not implemented in this assignment")
+
+    @staticmethod
+    def flash_attention_fw(q: Tensor, kT: Tensor, v: Tensor, causal: bool):
+        raise NotImplementedError("Not implemented in this assignment")
+
     cuda = False
 
 
@@ -98,6 +118,7 @@ class TensorBackend:
         self.attn_softmax_bw = ops.attn_softmax_bw
         self.layernorm_fw = ops.layernorm_fw
         self.layernorm_bw = ops.layernorm_bw
+        self.flash_attention_fw = ops.flash_attention_fw
 
 
 class SimpleOps(TensorOps):
@@ -234,19 +255,23 @@ class SimpleOps(TensorOps):
 
     @staticmethod
     def attn_softmax_fw(inp: Tensor, mask: Tensor):
-      raise NotImplementedError("Not implemented in this assignment")
+        raise NotImplementedError("Not implemented in this assignment")
 
     @staticmethod
     def attn_softmax_bw():
-      raise NotImplementedError("Not implemented in this assignment")
+        raise NotImplementedError("Not implemented in this assignment")
 
     @staticmethod
-    def layernorm_fw(inp: tensor):
-      raise NotImplementedError("Not implemented in this assignment")
+    def layernorm_fw(inp: Tensor):
+        raise NotImplementedError("Not implemented in this assignment")
 
     @staticmethod
     def layernorm_bw():
-      raise NotImplementedError("Not implemented in this assignment")
+        raise NotImplementedError("Not implemented in this assignment")
+
+    @staticmethod
+    def flash_attention_fw(q: Tensor, kT: Tensor, v: Tensor, causal: bool):
+        raise NotImplementedError("Not implemented in this assignment")
 
     is_cuda = False
 

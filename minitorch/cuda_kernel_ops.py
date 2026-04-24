@@ -34,6 +34,7 @@ def _load_optional_library(path: str):
 lib = ctypes.CDLL("minitorch/cuda_kernels/combine.so")
 lib_softmax = _load_optional_library("minitorch/cuda_kernels/softmax_kernel.so")
 lib_layernorm = _load_optional_library("minitorch/cuda_kernels/layernorm_kernel.so")
+lib_flash_attention = _load_optional_library("minitorch/cuda_kernels/flash_attention_kernel.so")
 datatype = np.float32
 
 # function map
@@ -539,4 +540,47 @@ class CudaKernelOps(TensorOps):
 
       return gamma_grad, beta_grad, inp_grad
       #   END ASSIGN4_2_2
+
+    @staticmethod
+    def flash_attention_fw(q: Tensor, kT: Tensor, v: Tensor, causal: bool):
+      if lib_flash_attention is None:
+          raise RuntimeError(
+              "flash_attention_kernel.so is required for flash attention. Build CUDA kernels first."
+          )
+
+      batch_size, nhead, seq_len, head_dim = q.shape
+      out = q.zeros(q.shape)
+      lse = q.zeros((batch_size, nhead, seq_len))
+      stream = torch.cuda.current_stream().cuda_stream
+
+      lib_flash_attention.launch_flash_attention_fw.argtypes = [
+          np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+          np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+          np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+          np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+          np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),
+          ctypes.c_int,
+          ctypes.c_int,
+          ctypes.c_int,
+          ctypes.c_int,
+          ctypes.c_bool,
+          ctypes.c_void_p,
+      ]
+      lib_flash_attention.launch_flash_attention_fw.restype = None
+
+      lib_flash_attention.launch_flash_attention_fw(
+          out._tensor._storage,
+          lse._tensor._storage,
+          q._tensor._storage,
+          kT._tensor._storage,
+          v._tensor._storage,
+          batch_size,
+          nhead,
+          seq_len,
+          head_dim,
+          causal,
+          stream,
+      )
+
+      return out, lse
       

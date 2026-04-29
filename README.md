@@ -1,280 +1,179 @@
-# llmsys_f25_hw4
+# FlashAttention for MiniTorch
 
-Public repository for Assignment 4 of 11-868 LLM Systems.
+**Fused, IO-aware self-attention CUDA kernel for decoder-only transformers -- built inside the MiniTorch educational framework.**
 
-## Environment (conda `cuda121`)
+> 11-868 LLM Systems - Carnegie Mellon University - Spring 2026
+> Siddharth Sarma - Divyansh Sood - Yuvraj Ahuja
 
-Every command in this README is expected to run inside the **`cuda121`** conda
-environment. Activate it once at the start of the session:
+---
 
-```bash
-conda activate cuda121
+## What this is
+
+A drop-in replacement for MiniTorch's standard self-attention path, implemented as a single fused CUDA kernel using **online softmax** and **row-streaming tiling**. It computes mathematically exact attention while avoiding the materialization of the `[B, H, N, N]` score and probability tensors that make standard attention quadratic in memory.
+
+Integrated end-to-end with MiniTorch's autograd and a 4-layer GPT-2-style decoder trained on IWSLT14 German->English.
+
+## Headline results
+
+Measured on an **NVIDIA RTX A1000 Laptop GPU** (3.9 GB working budget):
+
+| Metric                                   | Value                                          |
+| ---------------------------------------- | ---------------------------------------------- |
+| Peak forward speedup (`N=512`)           | **7.3x**                                       |
+| Peak forward+backward speedup (`N=2048`) | **1.9x**                                       |
+| Peak attention memory saved              | **2.9 GB**                                     |
+| Peak activation-memory reduction         | **~48x**                                       |
+| Forward parity (FP32, vs reference)      | `3.6e-7` max abs error                         |
+| Gradient parity (finite differences)     | `5.3e-3` max abs error (passes at 2e-2 threshold) |
+| IWSLT14 de->en BLEU (FlashAttention)     | **8.16**                                       |
+| IWSLT14 de->en BLEU (Standard)           | 5.46                                           |
+
+## What we built
+
+- **Fused CUDA forward kernel** (`src/flash_attention_kernel.cu`) -- online softmax with causal masking, one CUDA block per query row, keys/values streamed through SRAM.
+- **MiniTorch autograd integration** -- exposed as `Tensor.flash_attention(k_t, v, causal=True)`, with a recomputation-based backward and a safe fallback to the standard attention path when shapes/dtypes/dropout are not supported.
+- **`ctypes`/`nvcc` build integration** -- kernel compiles into the existing `combine.so` shared library, no extra linker plumbing required.
+- **Benchmark harness** -- latency, throughput (tokens/s), TFLOP/s, and `nvidia-smi`-sampled peak memory across `N in {128, 256, 512, 1024, 2048}`.
+- **Correctness suite** -- FP32 forward parity tests and finite-difference gradient checks.
+- **End-to-end IWSLT14 training and BLEU evaluation** with matched ablations across epochs x dropout x flash-on/off.
+
+## Repository layout
+
+```
+.
+├── src/
+│   ├── flash_attention_kernel.cu       # Fused CUDA forward kernel
+│   └── combine.cu                      # MiniTorch CUDA backend (extended)
+├── minitorch/
+│   ├── tensor_functions.py             # FlashAttentionFn autograd Function
+│   ├── cuda_kernel_ops.py              # CudaKernelOps.flash_attention_fw dispatch
+│   └── modules_transformer.py          # MultiHeadAttention with flash path
+├── kernel_tests/
+│   ├── test_flash_attention_fw.py      # Kernel forward parity
+│   └── test_flash_attention_bw.py      # Kernel backward parity
+├── tests/
+│   └── test_flash_attention.py         # Pytest suite
+├── project/
+│   ├── benchmark_flash_attention.py    # Latency / memory / throughput sweep
+│   ├── presentation_report.py          # End-to-end report generator
+│   ├── plot_presentation_results.py    # Figures from report JSON
+│   ├── make_poster.py                  # Poster generator
+│   └── run_machine_translation.py      # IWSLT14 training + BLEU eval
+├── report/
+│   └── LLMSYS_Final_Report_Team5.pdf   # Final report (PDF)
+└── README.md
 ```
 
-If you hit `ImportError: Numba needs NumPy 2.3 or less. Got NumPy 2.4.`, pin
-NumPy to a Numba-compatible version inside `cuda121` (the repo's
-`requirements.txt` already specifies `numpy==2.3.5`):
+## Quick start
+
+### Prerequisites
+
+- Linux with CUDA toolkit (`nvcc` >= 11.0)
+- Python >= 3.10
+- An NVIDIA GPU with compute capability >= 7.0
+
+### Build
 
 ```bash
-conda activate cuda121
-python -m pip install --force-reinstall "numpy==2.3.5"
-```
-
-Then verify:
-
-```bash
-python -c "import numpy, numba; print('numpy', numpy.__version__, 'numba', numba.__version__)"
-```
-
-For the plotting / poster steps you also need `fire` and `matplotlib`; they
-are pulled in by `requirements.txt`, but if they are missing in `cuda121`
-install them directly:
-
-```bash
-python -m pip install fire matplotlib
-```
-
-## FlashAttention integration
-
-This repo now includes a fused FlashAttention forward kernel with online softmax.
-
-### Build kernels
-
-```bash
+git clone https://github.com/<TBD>/flashattention-minitorch.git
+cd flashattention-minitorch
+pip install -e .
 bash compile_cuda.sh
 ```
 
-By default this compiles for both `sm_70` (V100) and `sm_86`.
-You can override with:
-
-```bash
-CUDA_ARCH_FLAGS="-gencode arch=compute_80,code=sm_80" bash compile_cuda.sh
-```
-
-### Correctness tests
-
-Kernel-level parity tests:
+### Verify correctness
 
 ```bash
 python kernel_tests/test_flash_attention_fw.py
 python kernel_tests/test_flash_attention_bw.py
+pytest tests/test_flash_attention.py -v
 ```
 
-Pytest coverage for op-level and module-level integration:
+All kernel and op-level tests should pass. Forward parity should be at FP32 round-off (~`4e-7`).
+
+### Run benchmarks
 
 ```bash
-pytest tests/test_flash_attention.py -q
-```
+# Single-shape microbenchmark
+python -m project.benchmark_flash_attention --configs hw3_default
 
-### Benchmarking and metrics
+# Full sequence-length sweep
+python -m project.benchmark_flash_attention --configs seq_128,seq_256,seq_512,seq_1024,seq_2048
 
-Run workload sweep and collect latency, speedup, TFLOPs/s, tokens/s, and peak-memory estimates:
-
-```bash
-python -m project.benchmark_flash_attention --warmup 5 --iters 30 --configs hw3_default,medium,long,xlong --output_json flash_bench.json
-```
-
-### Training with fused attention
-
-Use fused kernels with:
-
-```bash
-python -m project.run_machine_translation --use_fused_kernel True --attention_dropout 0.0
-```
-
-Enable/disable FlashAttention explicitly (independent of other fused kernels):
-
-```bash
-python -m project.run_machine_translation --use_fused_kernel True --use_flash_attention True
-python -m project.run_machine_translation --use_fused_kernel True --use_flash_attention False
-```
-
-`attention_dropout=0.0` is recommended for direct FlashAttention execution in training mode.
-
-## Presentation Metrics
-
-### 1) Numerical correctness (FP32 + finite differences)
-
-Run:
-
-```bash
-python -m project.presentation_report numerical --output_json numerical_report.json
-```
-
-The output includes:
-
-- `forward_max_abs_error` (target: <= 1e-3 for FP32)
-- finite-difference gradient parity (`finite_difference.max_abs_error`)
-
-### 2) Performance and memory on NVIDIA A1000
-
-Run:
-
-```bash
-python -m project.benchmark_flash_attention --warmup 5 --iters 30 --configs hw3_default,medium,long,xlong --gpu_index 0 --measure_gpu_memory True --output_json performance_report.json
-```
-
-This reports:
-
-- forward / fw+bw latency and speedup
-- measured GPU memory deltas (via `nvidia-smi` sampling)
-- estimated peak-memory reduction ratio
-
-### 3) End-to-end quality (BLEU on IWSLT de->en)
-
-Run:
-
-```bash
-python -m project.run_machine_translation --use_fused_kernel True --use_flash_attention True --attention_dropout 0.0 --eval_bleu True --bleu_split test --bleu_samples 100
-```
-
-This prints a JSON summary with BLEU score (`bleu.bleu`) and sample count.
-
-### One-command full report
-
-```bash
+# Full presentation report (correctness + benchmarks + BLEU)
 python -m project.presentation_report all --output_json presentation_report.json
 ```
 
-This includes:
+### Train a model with FlashAttention
 
-- numerical correctness
-- performance benchmark
-- sequence scaling curves
-- Flash BLEU run
-- exact matched baseline BLEU run (standard attention)
-- quality-throughput tradeoff sweep
+```python
+from minitorch.modules_transformer import MultiHeadAttention
 
-The written JSON is structured for both tools and people:
-
-- **`report_schema`** — name and version of the report format.
-- **`executive_summary`** — UTC timestamp, “at a glance” bullets (PASS/FAIL and key numbers), and a **section index** table (id, status, duration, one-line headline). In the saved file **`report_schema` and `executive_summary` are written before** the heavy payload keys so the overview is easy to spot in an editor or with `jq`.
-- **`notes`** — e.g. `memory_budget_mb`, benchmark config strings, graceful-failure reminder.
-- **`preserve_report_meta`** (default **true**) — if `presentation_report.json` already exists and contains a top-level **`report_meta`** object (poster / print metadata), it is copied into the new file so poster fields are not lost on re-run.
-
-By default, `all` also prints a **readable ASCII summary** to the terminal (`print_summary=True`) and writes a **Markdown** companion next to the JSON (`presentation_report.md` when the output path ends in `.json` and `write_markdown=True`). Disable either if you want JSON only:
-
-```bash
-python -m project.presentation_report all --output_json presentation_report.json --write_markdown=False --print_summary=False
+# Drop-in replacement: just set use_flash_attention=True
+attn = MultiHeadAttention(
+    n_embd=256,
+    n_head=8,
+    causal=True,
+    use_flash_attention=True,    # <-- this is the only change
+    attention_dropout=0.0,       # required for the fused path
+)
 ```
 
-Use an explicit Markdown path:
+## How it works (one paragraph)
+
+Standard attention dispatches 18+ separate MiniTorch tensor ops (`tensorMap`, `tensorZip`, `tensorReduce`, `MatrixMultiply`) and materializes the full `[B, H, N, N]` score and probability tensors in HBM. Our kernel replaces all of that with a single CUDA launch. Each CUDA block owns one query row; it loads `Q[b, h, i, :]` into shared memory, then streams keys/values one column at a time, computing `s = q . k_j / sqrt(d)`, updating the running pair `(m, l)` via the online-softmax recurrence, and accumulating into the output vector `O`. Causal masking is hard-coded as `if (j > i) continue;` inside the inner loop. The kernel writes back only the output `O` and the per-row log-sum-exp `Lse = m + log l`. Peak attention activation memory drops from `O(N^2)` to `O(N)`.
+
+## Honest scope
+
+This is a faithful educational implementation of the central FlashAttention-1 forward idea, not a full reproduction of the kernel. Specifically:
+
+- **Forward is fused** (single CUDA kernel, online softmax, no `N x N` materialization).
+- **Backward is not fused.** It recomputes attention through standard MiniTorch ops, which is correct but caps forward+backward speedup at ~1.9x even when forward speedup hits 7.3x. A fused backward using the saved `Lse` is the most impactful next step.
+- **Row-streaming, not blockwise tiling.** We use one CUDA block per query row rather than the paper's `B_r x B_c` tile schedule. Simpler, but lower arithmetic intensity at large `N`.
+- **FP32 only.** No FP16/BF16, no tensor-core path. Correctness-first.
+- **Targeted at memory-constrained Ampere (A1000), not Hopper.** No TMA, no async warp groups, no FP8. The kernel would not be a strong baseline on an A100/H100.
+- **BLEU is an integration sanity check**, not a quality claim. The +2.7 delta BLEU on a 100-sentence eval slice is well within run-to-run variance -- the right reading is "the fused path does not break translation quality."
+
+See `report/LLMSYS_Final_Report_Team5.pdf` Section 5 for the full discussion.
+
+## Reproducing the headline numbers
 
 ```bash
-python -m project.presentation_report all --output_json out/report.json --markdown_path out/REPORT.md
+# Forward / forward+backward speedup curves
+python -m project.benchmark_flash_attention \
+    --configs seq_128,seq_256,seq_512,seq_1024,seq_2048 \
+    --output_json bench.json
+
+# Memory scaling
+python -m project.benchmark_flash_attention \
+    --configs seq_128,seq_256,seq_512,seq_1024,seq_2048 \
+    --measure_gpu_memory True --output_json mem.json
+
+# IWSLT14 BLEU (~30 min/run on the A1000)
+python -m project.run_machine_translation --use_flash_attention True --epochs 1 --eval_bleu True
+python -m project.run_machine_translation --use_flash_attention False --epochs 1 --eval_bleu True
 ```
 
-### Explicit baseline BLEU run (matched settings)
+## Documentation
 
-Use the same training hyperparameters as FlashAttention and only disable flash attention:
+- `report/LLMSYS_Final_Report_Team5.pdf` -- Full final report. Methodology, A1000-specific design choices, complete experimental results, analysis of forward vs. forward+backward gap, limitations.
+- `flashattention_results_deep_dive.md` -- Detailed results analysis and parity discussion.
+- `flashattention_results_comparison.md` -- Side-by-side metrics and baselines.
+- `flashattention_vs_original_paper.md` -- Summary of similarities and deltas vs. the FlashAttention paper.
+- `presentation_report.md` -- Auto-generated report from `project.presentation_report`.
 
-```bash
-python -m project.run_machine_translation --use_fused_kernel True --use_flash_attention False --attention_dropout 0.0 --eval_bleu True --bleu_split test --bleu_samples 100
-```
+## Citation
 
-### Memory-budget-aware report runs
+If this work is useful to you, the paper we re-implement is:
 
-To keep workloads within a 4GB device budget and continue when a config cannot run:
+> Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, Christopher Re.
+> **FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness.**
+> NeurIPS 2022. [arXiv:2205.14135](https://arxiv.org/abs/2205.14135)
 
-```bash
-python -m project.presentation_report all --perf_memory_budget_mb 3900 --output_json presentation_report.json
-```
+## License
 
-### Plot generation
+MIT (see LICENSE if present).
 
-Generate publication-quality figures (PDF + PNG) from `presentation_report.json`:
+## Acknowledgements
 
-```bash
-python -m project.plot_presentation_results --report_json presentation_report.json --output_dir figures
-```
-
-This writes the following research-paper-ready artifacts to `figures/`:
-
-| File (stem) | Contents |
-| --- | --- |
-| `overview_summary` | 3-panel figure-1 overview: forward speedup, peak memory, gradient parity / BLEU |
-| `speedup_vs_seq` | Forward and forward+backward speedup vs. sequence length, with parity reference |
-| `latency_forward_comparison` | Forward latency vs. $N$ on log scale, with $\times$speedup annotations |
-| `latency_fw_bw_comparison` | Training-step (fw+bw) latency vs. $N$ on log scale |
-| `memory_savings_vs_seq` | Measured peak-memory deltas (MB), grouped bars with $\div$ratio labels |
-| `memory_scaling_theory` | $O(N^2)$ vs. $O(N)$ theoretical activation memory on log axes |
-| `tflops_comparison` | Achieved TFLOP/s per attention kernel |
-| `tokens_per_sec_comparison` | Effective attention tokens/s on log scale |
-| `numerical_grad_error` | Max / mean finite-difference gradient error per tensor with pass threshold |
-| `bleu_comparison` | End-to-end BLEU on IWSLT14 de$\rightarrow$en (shows $\Delta$BLEU when baseline is also run) |
-| `quality_throughput_tradeoff` | Pareto scatter of BLEU vs. tokens/s across the hyperparameter grid |
-
-Each figure is emitted both as a `.png` (300 dpi) and a `.pdf` (vector) with embedded
-Type 42 fonts, so the `.pdf` outputs can be dropped directly into a LaTeX paper.
-
-### Poster generation
-
-Build a single-page, print-ready research poster (48" × 36" landscape) from the
-same report and figure set. The poster embeds the already-generated figures and
-pulls headline numbers (peak speedup, memory saved, BLEU, gradient error)
-directly out of `presentation_report.json`:
-
-```bash
-conda activate cuda121
-python -m project.make_poster \
-    --report_json presentation_report.json \
-    --figures_dir figures \
-    --output_dir figures \
-    --title "FlashAttention for GPT-2: Fast, Memory-Efficient Self-Attention" \
-    --authors "Divyansh Sood" \
-    --affiliation "11-868 LLM Systems, Carnegie Mellon University"
-```
-
-This writes `figures/poster.pdf` (vector, for printing) and `figures/poster.png`
-(200 dpi, for web / screen). Sections included: title banner, 4 headline stat
-callouts (peak forward / forward+backward speedup, peak memory saved, BLEU),
-Motivation, Method (with the online-softmax update rules), three Performance
-panels (latency, speedup, peak memory), three Correctness / Quality panels
-(gradient parity, BLEU, memory scaling), and a footer with key takeaways.
-
-Regenerate the underlying figures first if `presentation_report.json` has
-changed:
-
-```bash
-python -m project.plot_presentation_results --report_json presentation_report.json --output_dir figures
-python -m project.make_poster              --report_json presentation_report.json --figures_dir figures --output_dir figures
-```
-
-### End-to-end (report → figures → poster) on `cuda121`
-
-```bash
-conda activate cuda121
-python -m project.presentation_report all --perf_memory_budget_mb 3900 --output_json presentation_report.json
-python -m project.plot_presentation_results --report_json presentation_report.json --output_dir figures
-python -m project.make_poster              --report_json presentation_report.json --figures_dir figures --output_dir figures
-```
-
-### `report_meta` in `presentation_report.json` (poster / print metadata)
-
-The repo’s `presentation_report.json` may include an optional top-level object
-`report_meta` with human-readable fields (title, subtitle, authors, course,
-contact email, dataset description, benchmark notes, etc.). When present,
-`project.make_poster` reads it automatically (`use_report_meta=True` by default)
-and uses it for the poster header and footer detail lines. Edit those strings
-to match your poster (especially `contact_email`).
-
-### Figures + a second poster from the same JSON (isolated folder)
-
-To keep one set of plots and a dedicated poster next to them (without
-overwriting `figures/poster.*`):
-
-```bash
-conda activate cuda121
-mkdir -p figures/presentation_report
-python -m project.plot_presentation_results \
-    --report_json presentation_report.json \
-    --output_dir figures/presentation_report
-python -m project.make_poster \
-    --report_json presentation_report.json \
-    --figures_dir figures/presentation_report \
-    --output_dir figures/presentation_report \
-    --stem poster_presentation_report
-```
-
-Outputs: `figures/presentation_report/*.pdf` / `*.png` plus
-`figures/presentation_report/poster_presentation_report.pdf` (and `.png`).
+Built on top of [MiniTorch](https://github.com/minitorch/minitorch) by Sasha Rush. Thanks to the course staff of CMU 11-868 LLM Systems (Spring 2026) for guidance and infrastructure.

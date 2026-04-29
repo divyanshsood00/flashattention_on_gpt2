@@ -12,6 +12,7 @@ tokenizers==0.22.1
 sacrebleu==2.5.1
 fire
 tqdm
+matplotlib==3.9.7
 
 # Tests
 pytest==9.0.2

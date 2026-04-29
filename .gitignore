@@ -1,37 +1,157 @@
+# Production-ready .gitignore for Python + CUDA projects
+#
+# - Python bytecode, virtualenvs, packaging, test artifacts
+# - CUDA/C++ build artifacts, compiled kernels and shared libraries
+# - Jupyter, IDE/editor, OS files, logs, datasets, checkpoints
+#
+# Use this as a starting point — adapt to your project's needs.
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 */__pycache__/
 *.py[cod]
 *$py.class
 
-# C extensions
+# C extensions and shared libraries
 *.so
+*.dylib
+*.dll
+*.pyd
 
-# Distribution / packaging
-*.egg-info/
-.eggs/
+# Object files, archives and binaries
+*.o
+*.obj
+*.a
+*.lib
+*.lo
+*.la
+*.elf
+*.exe
+
+# CUDA artifacts
+*.cubin
+*.ptx
+*.fatbin
+*.cu.o
+*.cu.obj
+
+# Build / packaging
 build/
 dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+wheelhouse/
+*.egg
+*.whl
+sdist/
+python-wheel-metadata/
 
-# Pytest cache
-.pytest_cache/
-
-# Mypy cache
-.mypy_cache/
-
-# Virtual environments
+# Virtual environments and environment files
 .venv/
 venv/
 env/
 ENV/
+env.bak/
+venv.bak/
+.conda/
+conda-meta/
+.env
+.env.*
 
-# Jupyter
-.ipynb_checkpoints/
+# Dependency / tool caches
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+.pyre/
+.cache/
+
+# Test and coverage reports
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+nosetests.xml
+junit-*.xml
+test-results/
+
+# Jupyter / IPython
+.ipynb_checkpoints
+*.ipynb_checkpoints
+*.nbconvert.ipynb
 
 # IDEs and editors
 .vscode/
 .idea/
+*.sublime-workspace
+*.sublime-project
+*.code-workspace
 
-# OS files
+# OS generated files
 .DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and runtime files
+*.log
+logs/
+*.out
+*.err
+*.pid
+
+# Databases and local storage
+*.sqlite3
+*.db
+*.db-journal
+
+# Model outputs, checkpoints, datasets, and large binaries
+models/
+model/
+checkpoints/
+checkpoints-*/
+workdir*/
+data/
+datasets/
+dataset/
+*.ckpt
+*.pth
+*.pt
+*.bin
+*.h5
+*.npy
+*.npz
+*.tar
+*.tar.gz
+*.zip
+
+# Secrets, keys and credentials
+*.pem
+*.key
+*.crt
+secrets/
+credentials/
+credentials.json
+*.env
+.env.*.local
+
+# Temporary / backup files
+*~
+*.swp
+*.swo
+*.bak
+*.orig
+.#*
+
+# Documentation build
+docs/_build/
+site/
+
+# Profiling / performance traces
+*.prof
+*.profraw
+*.trace
+
+# Misc
+*.tsbuildinfo
 .hypothesis/
+figures/

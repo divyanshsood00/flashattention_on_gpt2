@@ -29,6 +29,12 @@ DEFAULT_WORKLOADS: Dict[str, Workload] = {
     "medium": Workload(batch_size=32, nhead=8, seq_len=512, head_dim=32),
     "long": Workload(batch_size=16, nhead=8, seq_len=1024, head_dim=64),
     "xlong": Workload(batch_size=8, nhead=8, seq_len=2048, head_dim=64),
+    # Sequence-length scaling presets.
+    "seq_128": Workload(batch_size=64, nhead=8, seq_len=128, head_dim=64),
+    "seq_256": Workload(batch_size=64, nhead=8, seq_len=256, head_dim=64),
+    "seq_512": Workload(batch_size=32, nhead=8, seq_len=512, head_dim=64),
+    "seq_1024": Workload(batch_size=16, nhead=8, seq_len=1024, head_dim=64),
+    "seq_2048": Workload(batch_size=8, nhead=8, seq_len=2048, head_dim=64),
 }
 
 
@@ -185,6 +191,29 @@ def _estimate_memory_bytes(w: Workload) -> Tuple[int, int]:
     return baseline_bytes, flash_bytes
 
 
+def _fit_workload_to_budget(w: Workload, memory_budget_mb: float) -> Tuple[Workload, bool]:
+    """Shrink batch size until estimated baseline memory fits budget."""
+    if memory_budget_mb <= 0:
+        return w, False
+
+    cur = Workload(batch_size=w.batch_size, nhead=w.nhead, seq_len=w.seq_len, head_dim=w.head_dim)
+    changed = False
+
+    while cur.batch_size > 1:
+        baseline_bytes, _ = _estimate_memory_bytes(cur)
+        if baseline_bytes / (1024.0 ** 2) <= memory_budget_mb:
+            break
+        cur = Workload(
+            batch_size=max(1, cur.batch_size // 2),
+            nhead=cur.nhead,
+            seq_len=cur.seq_len,
+            head_dim=cur.head_dim,
+        )
+        changed = True
+
+    return cur, changed
+
+
 def _run_one(
     name: str,
     w: Workload,
@@ -337,35 +366,91 @@ def main(
     gpu_index: int = 0,
     measure_gpu_memory: bool = True,
     memory_sample_interval_ms: int = 20,
+    memory_budget_mb: float = 3900.0,
+    auto_shrink_to_budget: bool = True,
+    skip_on_budget_exceed: bool = True,
+    strict_configs: bool = False,
 ):
     backend = minitorch.TensorBackend(CudaKernelOps)
-    selected = [cfg.strip() for cfg in configs.split(",") if cfg.strip()]
+    # Fire can coerce comma-separated CLI args into tuples in some cases.
+    # Accept strings, tuples, or lists for robustness.
+    if isinstance(configs, (list, tuple)):
+        configs = ",".join(str(x) for x in configs)
+    selected = [cfg.strip() for cfg in str(configs).split(",") if cfg.strip()]
 
     meta = {
         "gpu_index": int(gpu_index),
         "gpu_name": _query_gpu_name(gpu_index),
         "measure_gpu_memory": bool(measure_gpu_memory),
         "memory_sample_interval_ms": int(memory_sample_interval_ms),
+        "memory_budget_mb": float(memory_budget_mb),
+        "auto_shrink_to_budget": bool(auto_shrink_to_budget),
+        "skip_on_budget_exceed": bool(skip_on_budget_exceed),
     }
 
     results: List[Dict] = []
     for cfg in selected:
         if cfg not in DEFAULT_WORKLOADS:
-            raise ValueError(f"Unknown config '{cfg}'. Available: {list(DEFAULT_WORKLOADS.keys())}")
-        print(f"Running benchmark for config={cfg}...")
-        results.append(
-            _run_one(
-                cfg,
-                DEFAULT_WORKLOADS[cfg],
-                backend,
-                warmup=warmup,
-                iters=iters,
-                seed=seed,
-                gpu_index=gpu_index,
-                measure_gpu_memory=bool(measure_gpu_memory),
-                memory_sample_interval_ms=memory_sample_interval_ms,
+            msg = f"Unknown config '{cfg}'. Available: {list(DEFAULT_WORKLOADS.keys())}"
+            if strict_configs:
+                raise ValueError(msg)
+            results.append(
+                {
+                    "config": cfg,
+                    "status": "skipped",
+                    "skip_reason": msg,
+                }
             )
+            continue
+
+        original_w = DEFAULT_WORKLOADS[cfg]
+        run_w = original_w
+        adjusted = False
+
+        if auto_shrink_to_budget:
+            run_w, adjusted = _fit_workload_to_budget(run_w, memory_budget_mb)
+
+        baseline_est_bytes, _ = _estimate_memory_bytes(run_w)
+        baseline_est_mb = baseline_est_bytes / (1024.0 ** 2)
+
+        if baseline_est_mb > memory_budget_mb and skip_on_budget_exceed:
+            results.append(
+                {
+                    "config": cfg,
+                    "status": "skipped",
+                    "shape": {
+                        "B": run_w.batch_size,
+                        "H": run_w.nhead,
+                        "N": run_w.seq_len,
+                        "d": run_w.head_dim,
+                    },
+                    "skip_reason": (
+                        f"Estimated baseline peak memory {baseline_est_mb:.2f} MB exceeds "
+                        f"budget {memory_budget_mb:.2f} MB"
+                    ),
+                }
+            )
+            continue
+
+        print(f"Running benchmark for config={cfg}...")
+        one = _run_one(
+            cfg,
+            run_w,
+            backend,
+            warmup=warmup,
+            iters=iters,
+            seed=seed,
+            gpu_index=gpu_index,
+            measure_gpu_memory=bool(measure_gpu_memory),
+            memory_sample_interval_ms=memory_sample_interval_ms,
         )
+        one["status"] = "ok"
+        if adjusted:
+            one["adjusted_for_budget"] = {
+                "original_B": original_w.batch_size,
+                "new_B": run_w.batch_size,
+            }
+        results.append(one)
 
     payload = {
         "meta": meta,

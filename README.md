@@ -55,17 +55,7 @@ Measured on an **NVIDIA RTX A1000 Laptop GPU** (3.9 GB working budget):
 
 ## Environment and setup
 
-All commands are expected to run inside the **`cuda121`** conda environment.
-
-```bash
-conda activate cuda121
-```
-
-If you hit `ImportError: Numba needs NumPy 2.3 or less. Got NumPy 2.4.`, pin NumPy in the environment (the repo already specifies `numpy==2.3.5` in [requirements.txt](requirements.txt)):
-
-```bash
-python -m pip install --force-reinstall "numpy==2.3.5"
-```
+All commands are expected to run inside the **`cuda 12.1`** in conda environment.
 
 Install dependencies and the package in editable mode:
 
